@@ -1,3 +1,4 @@
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 
 #include "Unity/IUnityInterface.h"
@@ -38,8 +39,7 @@
     apply(vkGetImageMemoryRequirements);        \
     apply(vkCmdCopyImage);                      \
     apply(vkAllocateCommandBuffers);            \
-    apply(vkDestroyImage);                      \
-    apply(vkFreeMemory);
+    apply(vkDestroyImage);
 
 #define VULKAN_DEFINE_API_FUNCPTR(func) static PFN_##func func
 VULKAN_DEFINE_API_FUNCPTR(vkGetInstanceProcAddr);
@@ -85,26 +85,24 @@ static IUnityInterfaces *s_UnityInterfaces = NULL;
 static IUnityGraphics *s_Graphics = NULL;
 static IUnityGraphicsVulkanV2 *s_UnityInterfaceVulkan = NULL;
 
-static bool s_NonVulkan = false;
+static bool s_IsVulkan = false;
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces *unityInterfaces)
 {
     s_UnityInterfaces = unityInterfaces;
-    s_Graphics = s_UnityInterfaces->Get<IUnityGraphics>();
-
-    s_NonVulkan = s_Graphics->GetRenderer() != kUnityGfxRendererVulkan;
-
-    if (s_NonVulkan)
-    {
-        s_UnityInterfaceVulkan = s_UnityInterfaces->Get<IUnityGraphicsVulkanV2>();
-    }
 }
-void DisposeExportTexture();
+
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DisposeExportTexture();
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
 {
     // リークしないために
     DisposeExportTexture();
+}
+
+extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DebugCall()
+{
+    return s_Graphics->GetRenderer();
 }
 
 typedef struct TextureHolder
@@ -123,14 +121,31 @@ static TextureHolder s_holder = {};
 
 extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTextureInitialize()
 {
-    if (s_NonVulkan)
+    if (s_UnityInterfaces == NULL)
+    {
+        return -6;
+    }
+    if (s_Graphics == NULL)
+    {
+        s_Graphics = s_UnityInterfaces->Get<IUnityGraphics>();
+        s_IsVulkan = s_Graphics->GetRenderer() == kUnityGfxRendererVulkan;
+
+        if (s_IsVulkan)
+        {
+            s_UnityInterfaceVulkan = s_UnityInterfaces->Get<IUnityGraphicsVulkanV2>();
+
+            UnityVulkanInstance uvInstance = s_UnityInterfaceVulkan->Instance();
+            LoadVulkanAPI(uvInstance.getInstanceProcAddr, uvInstance.instance);
+        }
+    }
+
+    if (s_IsVulkan == false)
     {
         return -1;
     }
 
     UnityVulkanInstance uvInstance = s_UnityInterfaceVulkan->Instance();
     VkDevice device = uvInstance.device;
-
     VkImage exportTargetTexture = {};
     VkImageCreateInfo exportTargetTextureCreateInfo = {};
     exportTargetTextureCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;

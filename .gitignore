@@ -103,4 +103,7 @@ InitTestScene*.unity*
 
 
 .vscode
+
 Assets/Amatousagi*
+
+Assets/UnityVulkanTextureShareingOnLinux/Plugins
