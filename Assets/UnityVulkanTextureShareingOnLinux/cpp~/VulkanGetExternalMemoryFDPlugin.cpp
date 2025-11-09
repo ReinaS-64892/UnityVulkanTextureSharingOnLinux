@@ -7,7 +7,7 @@
 #include "Unity/IUnityGraphicsVulkan.h"
 #include <unistd.h>
 
-// Original from MIT License https://github.com/Unity-Technologies/NativeRenderingPlugin/blob/f703c47a140d343c2c863a36d1aa5832586f3aaa/PluginSource/source/RenderAPI_Vulkan.cpp#L15-L58
+// Original from MIT License Copyright (c) 2016, Unity Technologies https://github.com/Unity-Technologies/NativeRenderingPlugin/blob/f703c47a140d343c2c863a36d1aa5832586f3aaa/PluginSource/source/RenderAPI_Vulkan.cpp#L15-L58
 #define UNITY_USED_VULKAN_API_FUNCTIONS(apply)  \
     apply(vkCreateInstance);                    \
     apply(vkCmdBeginRenderPass);                \
@@ -39,7 +39,8 @@
     apply(vkGetImageMemoryRequirements);        \
     apply(vkCmdCopyImage);                      \
     apply(vkAllocateCommandBuffers);            \
-    apply(vkDestroyImage);
+    apply(vkDestroyImage);                      \
+    apply(vkResetCommandBuffer);
 
 #define VULKAN_DEFINE_API_FUNCPTR(func) static PFN_##func func
 VULKAN_DEFINE_API_FUNCPTR(vkGetInstanceProcAddr);
@@ -61,7 +62,7 @@ static void LoadVulkanAPI(PFN_vkGetInstanceProcAddr getInstanceProcAddr, VkInsta
 #undef LOAD_VULKAN_FUNC
 }
 
-// Original from MIT License https://github.com/Unity-Technologies/NativeRenderingPlugin/blob/f703c47a140d343c2c863a36d1aa5832586f3aaa/PluginSource/source/RenderAPI_Vulkan.cpp#L96-L113
+// Original from MIT License Copyright (c) 2016, Unity Technologies https://github.com/Unity-Technologies/NativeRenderingPlugin/blob/f703c47a140d343c2c863a36d1aa5832586f3aaa/PluginSource/source/RenderAPI_Vulkan.cpp#L96-L113
 static int FindMemoryTypeIndex(VkPhysicalDeviceMemoryProperties const &physicalDeviceMemoryProperties, VkMemoryRequirements const &memoryRequirements, VkMemoryPropertyFlags memoryPropertyFlags)
 {
     uint32_t memoryTypeBits = memoryRequirements.memoryTypeBits;
@@ -108,6 +109,8 @@ extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DebugCall()
 typedef struct TextureHolder
 {
     bool initialized;
+
+    void* sourcePtr;
 
     VkImage vkImage;
     VkDeviceMemory vkMemory;
@@ -185,9 +188,12 @@ extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTextureInitializ
     }
 
     VkDeviceMemory exportSourceMemory = {};
+    VkExportMemoryAllocateInfo exportInfo = {};
+    exportInfo.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+    exportInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
     VkMemoryAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.pNext = nullptr;
+    allocInfo.pNext = &exportInfo;
     allocInfo.allocationSize = deviceSize;
     allocInfo.memoryTypeIndex = memTypeIndex;
     vkAllocateMemory(device, &allocInfo, nullptr, &exportSourceMemory);
@@ -234,31 +240,68 @@ extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ThisPID()
     return s_holder.thisPid;
 }
 
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CopyToExportedTexture(void *renderTextureHandle)
+extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTexture(void *renderTextureHandle)
 {
     if (s_holder.initialized == false)
     {
-        return;
+        return -1;
+    }
+
+    s_holder.sourcePtr = renderTextureHandle;
+
+    return 0;
+}
+extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CopyToExportedTexture()
+{
+    if (s_holder.initialized == false)
+    {
+        return -1;
     }
 
     UnityVulkanInstance uvInstance = s_UnityInterfaceVulkan->Instance();
     VkDevice device = uvInstance.device;
 
+    s_UnityInterfaceVulkan->EnsureOutsideRenderPass();
+
     UnityVulkanImage unityVulkanImage = {};
-    VkImageLayout imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkImageLayout imageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     VkPipelineStageFlags pipelineStageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkAccessFlags accessFlags = VK_ACCESS_TRANSFER_READ_BIT;
     UnityVulkanResourceAccessMode accessMode = kUnityVulkanResourceAccess_PipelineBarrier;
-    s_UnityInterfaceVulkan->AccessTexture(renderTextureHandle, UnityVulkanWholeImage, imageLayout, pipelineStageFlags, accessFlags, accessMode, &unityVulkanImage);
+    if (!s_UnityInterfaceVulkan->AccessTexture(s_holder.sourcePtr, UnityVulkanWholeImage, imageLayout, pipelineStageFlags, accessFlags, accessMode, &unityVulkanImage))
+    {
+        return -2;
+    }
 
     UnityVulkanRecordingState recordingState;
-    s_UnityInterfaceVulkan->CommandRecordingState(&recordingState, kUnityVulkanGraphicsQueueAccess_DontCare);
+    if (!s_UnityInterfaceVulkan->CommandRecordingState(&recordingState, kUnityVulkanGraphicsQueueAccess_DontCare))
+    {
+        return -3;
+    }
+
+    if (recordingState.commandBuffer == VK_NULL_HANDLE)
+    {
+        return -4;
+    }
 
     VkImageCopy copyRange;
     copyRange.extent.width = 1024;
     copyRange.extent.height = 1024;
     copyRange.extent.depth = 1;
-    vkCmdCopyImage(recordingState.commandBuffer, unityVulkanImage.image, unityVulkanImage.layout, s_holder.vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &copyRange);
+    VkImageCopy copyRangeArray[1] = {copyRange};
+    vkCmdCopyImage(recordingState.commandBuffer, unityVulkanImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s_holder.vkImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, copyRangeArray);
+    return 0;
+}
+static void UNITY_INTERFACE_API OnRenderEvent(int eventID)
+{
+	if (eventID == 1)
+	{
+        CopyToExportedTexture();
+	}
+}
+extern "C" UnityRenderingEvent UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API GetRenderEventFunc()
+{
+	return OnRenderEvent;
 }
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DisposeExportTexture()

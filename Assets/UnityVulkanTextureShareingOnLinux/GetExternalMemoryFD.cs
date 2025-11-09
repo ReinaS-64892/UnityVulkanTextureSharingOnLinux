@@ -3,18 +3,17 @@
 using System;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using UnityEditor;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 [RequireComponent(typeof(Camera))]
-[ExecuteInEditMode]
+[ExecuteAlways]
 public class GetExternalMemoryFD : MonoBehaviour
 {
-    [NonSerialized]
     public RenderTexture RenderTexture;
-    [NonSerialized]
     public RenderTexture CameraRenderTexture;
-
-    static HttpClient _client = null;
+    private Camera s_Camera;
 
     [ContextMenu("Init")]
     void Init()
@@ -27,37 +26,42 @@ public class GetExternalMemoryFD : MonoBehaviour
 
         RenderTexture = new RenderTexture(1024, 1024, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm);
         CameraRenderTexture = new RenderTexture(1024, 1024, 32, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm);
-        GetComponent<Camera>().targetTexture = CameraRenderTexture;
+        s_Camera = GetComponent<Camera>();
+        s_Camera.targetTexture = CameraRenderTexture;
 
         var texID = new ExportTextureID() { FileDescriptor = GetExportFileDescriptor(), Pid = ThisPID() };
-        Debug.Log($"fd:{texID.FileDescriptor},pid:{texID.Pid}");
-        var jsonStr = JsonUtility.ToJson(texID);
+        Debug.Log($"pid-fd:{texID.Pid} {texID.FileDescriptor}");
 
-        if (_client == null) { _client = new(); }
-        _client.PostAsync("http://127.0.0.1:9400/", new StringContent(jsonStr));
+        var exportResult = ExportTexture(RenderTexture);
+        Debug.Log("export! " + exportResult);
+
+        EditorApplication.update -= OnCameraRender;
+        EditorApplication.update += OnCameraRender;
     }
+
+
     [Serializable]
     public class ExportTextureID
     {
         public int FileDescriptor;
         public int Pid;
     }
-
-    void OnPostRender()
+    void OnCameraRender()
     {
         if (RenderTexture == null) { return; }
+        if (s_Camera == null) { return; }
+        s_Camera.Render();
         Graphics.CopyTexture(CameraRenderTexture, RenderTexture);
-        CopyToExportedTexture(RenderTexture);
-
-        // ... ?
+        GL.IssuePluginEvent(GetRenderEventFunc(), 1);
+        Debug.Log("sync!");
     }
 
     [ContextMenu("Exit")]
     void OnDestroy()
     {
-        if (GetComponent<Camera>().targetTexture != null)
+        if (s_Camera.targetTexture != null)
         {
-            GetComponent<Camera>().targetTexture = null;
+            s_Camera.targetTexture = null;
         }
         if (RenderTexture != null)
         {
@@ -67,6 +71,8 @@ public class GetExternalMemoryFD : MonoBehaviour
             DestroyImmediate(CameraRenderTexture);
             RenderTexture = null;
             CameraRenderTexture = null;
+
+            EditorApplication.update -= OnCameraRender;
         }
     }
     [ContextMenu("DebugCall")]
@@ -86,13 +92,15 @@ public class GetExternalMemoryFD : MonoBehaviour
 
     [DllImport("VulkanGetExternalMemoryFDPlugin.so")]
     extern static int ThisPID();
-    unsafe void CopyToExportedTexture(RenderTexture renderTexture)
+    unsafe int ExportTexture(RenderTexture renderTexture)
     {
-        CopyToExportedTextureImpl((void*)renderTexture.GetNativeTexturePtr());
+        return ExportTextureImpl((void*)renderTexture.GetNativeTexturePtr());
     }
-    [DllImport("VulkanGetExternalMemoryFDPlugin.so")]
-    extern unsafe static void CopyToExportedTextureImpl(void* rtNativePtr);
+    [DllImport("VulkanGetExternalMemoryFDPlugin.so", EntryPoint = "ExportTexture")]
+    extern unsafe static int ExportTextureImpl(void* rtNativePtr);
 
+    [DllImport("VulkanGetExternalMemoryFDPlugin.so")]
+    private static extern IntPtr GetRenderEventFunc();
 
     [DllImport("VulkanGetExternalMemoryFDPlugin.so")]
     extern static int DebugCall();
