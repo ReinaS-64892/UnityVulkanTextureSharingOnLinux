@@ -13,6 +13,10 @@
 
 ![unity to vulkano](./README_object/unity-to-vulkano-demo.mp4)
 
+https://github.com/user-attachments/assets/5e5a6b73-b868-439a-a6e9-5e226063000d
+
+
 つまり。
 
-Vulkan 同士の GPU 上メモリの共有の実証実験には成功しましたが、Unity からの共有には成功していません。 Unity 何もわからん。
+Vulkan 同士の GPU 上メモリの共有の実証実験には成功しましたが、Unity からの共有には半分成功していません。 Unity 何もわからん。
+(おそらくですが、色は正常であり、この GPU 向けのメモリ配置がぐちゃってると思われるのでそれを戻すような compute shader などを実行すればごまかせる可能性はあります。)
