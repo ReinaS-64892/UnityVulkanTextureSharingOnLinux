@@ -107,3 +107,9 @@ InitTestScene*.unity*
 Assets/Amatousagi*
 
 Assets/UnityVulkanTextureShareingOnLinux/Plugins
+
+target
+Cargo.lock
+Receiver/Cargo.lock
+
+Sender/src/image_img.png

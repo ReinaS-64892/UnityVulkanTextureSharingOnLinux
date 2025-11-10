@@ -1,0 +1,12 @@
+[package]
+name = "Sender"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+winit = { version = "0.30.12",features= []}
+vulkano = { version = "0.35.2", features = [] }
+vulkano-shaders = "0.35.0"
+png = "0.18.0"
+rustix = { version = "1.1.2", features = ["process"] }
+
