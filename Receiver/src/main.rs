@@ -26,10 +26,7 @@ use vulkano::{
     },
     format::Format,
     image::{
-        Image, ImageCreateFlags, ImageCreateInfo, ImageType, ImageUsage,
-        sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
-        sys::RawImage,
-        view::ImageView,
+        Image, ImageCreateFlags, ImageCreateInfo, ImageFormatInfo, ImageLayout, ImageTiling, ImageType, ImageUsage, sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode}, sys::RawImage, view::ImageView
     },
     instance::{Instance, InstanceCreateFlags, InstanceCreateInfo},
     memory::{
@@ -62,6 +59,7 @@ use vulkano::{
 };
 use winit::{
     application::ApplicationHandler,
+    dpi::{PhysicalSize, Size},
     event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
@@ -119,6 +117,7 @@ impl App {
             khr_swapchain: true,
             khr_external_memory: true,
             khr_external_memory_fd: true,
+            ext_image_drm_format_modifier:true,
             ..DeviceExtensions::empty()
         };
         let (physical_device, queue_family_index) = instance
@@ -177,16 +176,16 @@ impl App {
 
         let vertices = [
             MyVertex {
-                position: [-0.5, -0.5],
+                position: [-1.0, -1.0],
             },
             MyVertex {
-                position: [-0.5, 0.5],
+                position: [-1.0, 1.0],
             },
             MyVertex {
-                position: [0.5, -0.5],
+                position: [1.0, -1.0],
             },
             MyVertex {
-                position: [0.5, 0.5],
+                position: [1.0, 1.0],
             },
         ];
         let vertex_buffer = Buffer::from_iter(
@@ -217,7 +216,7 @@ impl App {
             // let mut reader = decoder.read_info().unwrap();
             // let info = reader.info();
             // let extent = [info.width, info.height, 1];
-            let extent = [1024, 1024, 1];
+            // let extent = [1024, 1024, 1];
 
             // let upload_buffer = Buffer::new_slice(
             //     memory_allocator.clone(),
@@ -238,6 +237,8 @@ impl App {
             //     .next_frame(&mut upload_buffer.write().unwrap())
             //     .unwrap();
 
+            // let extent = [1024, 1024, 1];
+            let extent = [512, 512, 1];
             let raw_image = RawImage::new(
                 device.clone(),
                 ImageCreateInfo {
@@ -247,6 +248,9 @@ impl App {
                     usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
                     flags: ImageCreateFlags::empty(),
                     external_memory_handle_types: ExternalMemoryHandleTypes::OPAQUE_FD,
+                    tiling: ImageTiling::Optimal,
+                    mip_levels: 1,
+                    initial_layout:ImageLayout::Undefined,
 
                     ..Default::default()
                 },
@@ -303,9 +307,10 @@ impl App {
         let sampler = Sampler::new(
             device.clone(),
             SamplerCreateInfo {
-                mag_filter: Filter::Linear,
-                min_filter: Filter::Linear,
-                address_mode: [SamplerAddressMode::Repeat; 3],
+                mag_filter: Filter::Nearest,
+                min_filter: Filter::Nearest,
+                mipmap_mode: SamplerMipmapMode::Nearest,
+                address_mode: [SamplerAddressMode::ClampToEdge; 3],
                 ..Default::default()
             },
         )
@@ -331,7 +336,11 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("vulkano fd receive"))
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("vulkano fd receive")
+                        .with_inner_size(Size::Physical(PhysicalSize::new(1024, 1024))),
+                )
                 .unwrap(),
         );
         let surface = Surface::from_window(self.instance.clone(), window.clone()).unwrap();
@@ -538,7 +547,7 @@ impl ApplicationHandler for App {
                 builder
                     .begin_render_pass(
                         RenderPassBeginInfo {
-                            clear_values: vec![Some([0.0, 0.0, 1.0, 1.0].into())],
+                            clear_values: vec![Some([0.0, 0.0, 0.0, 1.0].into())],
                             ..RenderPassBeginInfo::framebuffer(
                                 rcx.framebuffers[image_index as usize].clone(),
                             )
@@ -644,7 +653,7 @@ mod vs {
 
             void main() {
                 gl_Position = vec4(position, 0.0, 1.0);
-                tex_coords = position + vec2(0.5);
+                tex_coords = (position + vec2(1.0)) * vec2(0.5);
             }
         ",
     }

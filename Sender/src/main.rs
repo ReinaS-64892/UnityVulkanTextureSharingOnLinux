@@ -20,10 +20,7 @@ use vulkano::{
     },
     format::Format,
     image::{
-        Image, ImageCreateInfo, ImageType, ImageUsage,
-        sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
-        sys::RawImage,
-        view::ImageView,
+        Image, ImageCreateInfo, ImageTiling, ImageType, ImageUsage, sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo}, sys::RawImage, view::ImageView
     },
     instance::{Instance, InstanceCreateFlags, InstanceCreateInfo},
     memory::{
@@ -236,6 +233,7 @@ impl App {
                     format: Format::R8G8B8A8_UNORM,
                     extent,
                     usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+                    tiling: ImageTiling::Optimal,
 
                     // fd 公開のためにはこの定義が当然必要でこれをするためには raw_image から、少し低レベルな API を触る必要があるっぽい
                     external_memory_handle_types: ExternalMemoryHandleTypes::OPAQUE_FD,

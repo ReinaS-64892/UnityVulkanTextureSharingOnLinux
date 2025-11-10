@@ -6,6 +6,7 @@
 #include "Unity/IUnityGraphics.h"
 #include "Unity/IUnityGraphicsVulkan.h"
 #include <unistd.h>
+#include <fstream>
 
 // Original from MIT License Copyright (c) 2016, Unity Technologies https://github.com/Unity-Technologies/NativeRenderingPlugin/blob/f703c47a140d343c2c863a36d1aa5832586f3aaa/PluginSource/source/RenderAPI_Vulkan.cpp#L15-L58
 #define UNITY_USED_VULKAN_API_FUNCTIONS(apply)  \
@@ -40,7 +41,8 @@
     apply(vkCmdCopyImage);                      \
     apply(vkAllocateCommandBuffers);            \
     apply(vkDestroyImage);                      \
-    apply(vkResetCommandBuffer);
+    apply(vkResetCommandBuffer);                \
+    apply(vkBindImageMemory);
 
 #define VULKAN_DEFINE_API_FUNCPTR(func) static PFN_##func func
 VULKAN_DEFINE_API_FUNCPTR(vkGetInstanceProcAddr);
@@ -101,16 +103,9 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
     DisposeExportTexture();
 }
 
-extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DebugCall()
-{
-    return s_Graphics->GetRenderer();
-}
-
 typedef struct TextureHolder
 {
     bool initialized;
-
-    void* sourcePtr;
 
     VkImage vkImage;
     VkDeviceMemory vkMemory;
@@ -122,7 +117,7 @@ typedef struct TextureHolder
 
 static TextureHolder s_holder = {};
 
-extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTextureInitialize()
+extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTexture(void *renderTextureHandle)
 {
     if (s_UnityInterfaces == NULL)
     {
@@ -149,37 +144,48 @@ extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTextureInitializ
 
     UnityVulkanInstance uvInstance = s_UnityInterfaceVulkan->Instance();
     VkDevice device = uvInstance.device;
-    VkImage exportTargetTexture = {};
-    VkImageCreateInfo exportTargetTextureCreateInfo = {};
-    exportTargetTextureCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    exportTargetTextureCreateInfo.pNext = nullptr;
-    exportTargetTextureCreateInfo.imageType = VK_IMAGE_TYPE_2D;
-    exportTargetTextureCreateInfo.extent.width = 1024;
-    exportTargetTextureCreateInfo.extent.height = 1024;
-    exportTargetTextureCreateInfo.extent.depth = 1;
-    exportTargetTextureCreateInfo.mipLevels = 1;
-    exportTargetTextureCreateInfo.arrayLayers = 1;
-    exportTargetTextureCreateInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-    exportTargetTextureCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    exportTargetTextureCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    exportTargetTextureCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    exportTargetTextureCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    exportTargetTextureCreateInfo.flags = 0;
 
-    VkResult crateImageResult = vkCreateImage(device, &exportTargetTextureCreateInfo, nullptr, &exportTargetTexture);
+    s_UnityInterfaceVulkan->EnsureOutsideRenderPass();
 
-    if (crateImageResult != VK_SUCCESS)
-    {
-        return -2;
-    }
+    VkImage image = *reinterpret_cast<VkImage *>(renderTextureHandle);
 
-    VkDeviceSize deviceSize = 1024 * 1024 * 4;
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (512 * 512 * 4) + (256 * 256 * 4) + (128 * 128 * 4) + (64 * 64 * 4) + (32 * 32 * 4) + (16 * 16 * 4) + (8 * 8 * 4) + (4 * 4 * 4) + (2 * 2 * 4) + (1 * 1 * 4);
+
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - 4;
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (16 * 16 * 4);//(-1024)
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (2048);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (2048 + 1024);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (2048 + 1024 + 512);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 64);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 128);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 256 - 256);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 256 - 128 - 64 - 32);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 256 - 128 - 64);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 256 - 128);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 256 - 64);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 256);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) - (4096 - 512);
+
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) + (-4096 + 512);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) + (-4096 + 128);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) + (-4096 + 64);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) + (-4096 + 32);
+
+
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) + (-4096 + 4);
+    // --- ↑ up ok --- ↓ down ng size
+    // おそらく 4206592 が境界だと思しき
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (64 * 64 * 4) + (-4096);
+
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4) + (32 * 32 * 4);
+    // VkDeviceSize deviceSize = (1024 * 1024 * 4);
 
     VkPhysicalDeviceMemoryProperties physicalDeviceProperties;
     vkGetPhysicalDeviceMemoryProperties(uvInstance.physicalDevice, &physicalDeviceProperties);
 
     VkMemoryRequirements requirements;
-    vkGetImageMemoryRequirements(device, exportTargetTexture, &requirements);
+    vkGetImageMemoryRequirements(device, image, &requirements);
 
     int memTypeIndex = FindMemoryTypeIndex(physicalDeviceProperties, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (memTypeIndex < 0)
@@ -194,9 +200,15 @@ extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTextureInitializ
     VkMemoryAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.pNext = &exportInfo;
-    allocInfo.allocationSize = deviceSize;
+    allocInfo.allocationSize = requirements.size;
     allocInfo.memoryTypeIndex = memTypeIndex;
     vkAllocateMemory(device, &allocInfo, nullptr, &exportSourceMemory);
+
+    VkResult bindResult = vkBindImageMemory(device, image, exportSourceMemory, 0);
+    if (bindResult != VK_SUCCESS)
+    {
+        return -4;
+    }
 
     int fd = -1;
     VkMemoryGetFdInfoKHR info = {};
@@ -208,13 +220,13 @@ extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTextureInitializ
     VkResult getfdResult = vkGetMemoryFdKHR(device, &info, &fd);
     if (getfdResult != VK_SUCCESS)
     {
-        return -4;
+        return -5;
     }
 
     // result write
     s_holder.initialized = true;
 
-    s_holder.vkImage = exportTargetTexture;
+    s_holder.vkImage = image;
     s_holder.vkMemory = exportSourceMemory;
 
     s_holder.thisPid = getpid();
@@ -240,69 +252,75 @@ extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ThisPID()
     return s_holder.thisPid;
 }
 
-extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ExportTexture(void *renderTextureHandle)
-{
-    if (s_holder.initialized == false)
-    {
-        return -1;
-    }
+// extern "C" void *UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API SharedTextureNativePtr()
+// {
+//     if (s_holder.initialized == false)
+//     {
+//         return nullptr;
+//     }
 
-    s_holder.sourcePtr = renderTextureHandle;
+//     return &s_holder.vkImage;
+// }
+// extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CopyToExportedTexture()
+// {
+//     if (s_holder.initialized == false)
+//     {
+//         return -1;
+//     }
+//     if (s_holder.sourcePtr == nullptr)
+//     {
+//         return -2;
+//     }
 
-    return 0;
-}
-extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CopyToExportedTexture()
-{
-    if (s_holder.initialized == false)
-    {
-        return -1;
-    }
+//     UnityVulkanInstance uvInstance = s_UnityInterfaceVulkan->Instance();
+//     VkDevice device = uvInstance.device;
 
-    UnityVulkanInstance uvInstance = s_UnityInterfaceVulkan->Instance();
-    VkDevice device = uvInstance.device;
+//     s_UnityInterfaceVulkan->EnsureOutsideRenderPass();
 
-    s_UnityInterfaceVulkan->EnsureOutsideRenderPass();
+//     UnityVulkanImage unityVulkanImage = {};
+//     VkImageLayout imageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+//     VkPipelineStageFlags pipelineStageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
+//     VkAccessFlags accessFlags = VK_ACCESS_TRANSFER_READ_BIT;
+//     UnityVulkanResourceAccessMode accessMode = kUnityVulkanResourceAccess_PipelineBarrier;
+//     if (!s_UnityInterfaceVulkan->AccessTexture(s_holder.sourcePtr, UnityVulkanWholeImage, imageLayout, pipelineStageFlags, accessFlags, accessMode, &unityVulkanImage))
+//     {
+//         return -3;
+//     }
 
-    UnityVulkanImage unityVulkanImage = {};
-    VkImageLayout imageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    VkPipelineStageFlags pipelineStageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    VkAccessFlags accessFlags = VK_ACCESS_TRANSFER_READ_BIT;
-    UnityVulkanResourceAccessMode accessMode = kUnityVulkanResourceAccess_PipelineBarrier;
-    if (!s_UnityInterfaceVulkan->AccessTexture(s_holder.sourcePtr, UnityVulkanWholeImage, imageLayout, pipelineStageFlags, accessFlags, accessMode, &unityVulkanImage))
-    {
-        return -2;
-    }
+//     UnityVulkanRecordingState recordingState;
+//     if (!s_UnityInterfaceVulkan->CommandRecordingState(&recordingState, kUnityVulkanGraphicsQueueAccess_DontCare))
+//     {
+//         return -4;
+//     }
 
-    UnityVulkanRecordingState recordingState;
-    if (!s_UnityInterfaceVulkan->CommandRecordingState(&recordingState, kUnityVulkanGraphicsQueueAccess_DontCare))
-    {
-        return -3;
-    }
+//     if (recordingState.commandBuffer == VK_NULL_HANDLE)
+//     {
+//         return -5;
+//     }
 
-    if (recordingState.commandBuffer == VK_NULL_HANDLE)
-    {
-        return -4;
-    }
+//     VkImageCopy copyRange;
+//     copyRange.extent.width = 1024;
+//     copyRange.extent.height = 1024;
+//     copyRange.extent.depth = 1;
+//     vkCmdCopyImage(recordingState.commandBuffer, unityVulkanImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s_holder.vkImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRange);
+//     return 0;
+// }
+// static void UNITY_INTERFACE_API OnRenderEvent(int eventID)
+// {
+//     int result = CopyToExportedTexture();
 
-    VkImageCopy copyRange;
-    copyRange.extent.width = 1024;
-    copyRange.extent.height = 1024;
-    copyRange.extent.depth = 1;
-    VkImageCopy copyRangeArray[1] = {copyRange};
-    vkCmdCopyImage(recordingState.commandBuffer, unityVulkanImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s_holder.vkImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, copyRangeArray);
-    return 0;
-}
-static void UNITY_INTERFACE_API OnRenderEvent(int eventID)
-{
-	if (eventID == 1)
-	{
-        CopyToExportedTexture();
-	}
-}
-extern "C" UnityRenderingEvent UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API GetRenderEventFunc()
-{
-	return OnRenderEvent;
-}
+//     std::ofstream outfile;
+//     outfile.open("/home/Reina/Rs/UnityProject/UnityVulkanTextureSharingOnLinux/Library/UVTSOL-Log.txt", std::ios::app);
+
+//     outfile << std::to_string(result);
+//     outfile << "\n";
+
+//     outfile.close();
+// }
+// extern "C" UnityRenderingEvent UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API GetRenderEventFunc()
+// {
+//     return OnRenderEvent;
+// }
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DisposeExportTexture()
 {
@@ -318,4 +336,9 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DisposeExportTexture(
     vkFreeMemory(device, s_holder.vkMemory, nullptr);
 
     s_holder = {};
+}
+
+extern "C" int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DebugCall()
+{
+    return 0;
 }
