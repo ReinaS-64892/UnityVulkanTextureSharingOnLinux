@@ -1,5 +1,7 @@
 # UnityVulkanTextureSharingOnLinux
 
+[ブログ](https://blog.rs64.net/posts/unity-to-external-proces-passing-gpu-memory/)
+
 これは Reina_Sakiria が VK_KHR_external_memory_fd を使って、GPU 上のメモリを共有できるのかどうか調べるためのテストレポジトリになります！
 
 それぞれ rust/vulkano での Receiver と Sender があり、Sender は起動すると stdout に pid と fd を出力し、 Receiver は 起動時引数に pid と fd をいれ 特権で起動することで共有を見ることができる。
